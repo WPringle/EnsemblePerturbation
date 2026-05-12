@@ -10,6 +10,7 @@ import cmocean
 from matplotlib import pyplot
 import numpy as np
 from sklearn.decomposition import PCA
+from ppca import PPCA
 
 from ensembleperturbation.plotting.geometry import plot_points, plot_surface
 from ensembleperturbation.utilities import get_logger
@@ -47,6 +48,37 @@ def karhunen_loeve_expansion(
             'eigenvalues': pca_obj.explained_variance_,
             'neig': len(pca_obj.explained_variance_),
             'samples': pca_obj.transform(ymodel),
+        }
+
+    elif method == 'PPCA':
+        LOGGER.info(f'Using pca-magic PPCA decomposition method that can handle NaNs')
+        # Using the pca-magic PPCA (same as KL in discrete space, fills in missing data)
+        pca_obj = PPCA()
+        # it doesn't seem to converge well with a small prescribed d
+        pca_obj.fit(data=ymodel, d=ymodel.shape[0], min_obs=0, random_state=666)
+        if not isinstance(neig, int):
+            # to be more like PCA use commented line below
+            # (but I think the internal way is nice to reduce modes
+            #  that lead to too much variance explained )
+            # pca_obj.var_exp = pca_obj.eig_vals.cumsum() / pca_obj.eig_vals.sum()
+            neig = min(ymodel.shape[0], (pca_obj.var_exp < neig).sum() + 1)
+        # trim
+        pca_obj.C = pca_obj.C[:, :neig]
+        # the below infers we always make a zero-depth prediction for
+        # nodes that never get wet in any of the ensemble simulations,
+        # but nodes that get wet at least once get predictions
+        # (same as setting always_wet flag)
+        stds = pca_obj.stds
+        stds[np.isnan(stds)] = 0
+        means = pca_obj.means
+        means[np.isnan(means)] = 0
+        # ---
+        kl_dict = {
+            'mean_vector': means,
+            'modes': pca_obj.C.T * stds,
+            'eigenvalues': pca_obj.eig_vals[:neig],
+            'neig': neig,
+            'samples': pca_obj.transform()[:, :neig] / np.sqrt(pca_obj.eig_vals[:neig]),
         }
 
     else:
